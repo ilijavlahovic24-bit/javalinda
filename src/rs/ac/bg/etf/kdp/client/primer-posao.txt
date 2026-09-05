@@ -1,0 +1,5 @@
+jar=test-job.jar
+mainClass=test.TestJob
+args=arg1 arg2
+in.podaci.txt=lokalni/podaci.txt
+out=izlaz.txt
