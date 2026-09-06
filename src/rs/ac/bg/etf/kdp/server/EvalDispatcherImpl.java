@@ -1,17 +1,17 @@
 package rs.ac.bg.etf.kdp.server;
 
+import java.rmi.RemoteException;
+
 import rs.ac.bg.etf.kdp.net.MessageConnection;
 import rs.ac.bg.etf.kdp.protocol.EvalAck;
 import rs.ac.bg.etf.kdp.protocol.EvalRequest;
 import rs.ac.bg.etf.kdp.util.SimpleLogger;
 
 /**
- * Bira slobodnu radnu stanicu preko WorkerRegistry-ja i salje joj
- * EvalRequest preko nove konekcije ka njenom dispatch host/port-u
- * (server je ovde klijent, stanica je server - videti napomenu na vrhu
- * odgovora u kom je ovo uvedeno). Ne drzi trajnu konekciju - otvara,
- * salje, ceka odgovor, zatvara. Jednostavnije od pool-ovanja konekcija za
- * sada; ako se eval() pokaze cestim, razmotriti keširanje konekcija
+ * Bira sledecu stanicu round-robin principom (WorkerRegistry.nextWorker())
+ * i salje joj EvalRequest preko NOVE konekcije ka njenom dispatch
+ * host/port-u. Ne drzi trajnu konekciju - otvara, salje, ceka odgovor,
+ * zatvara.
  */
 public class EvalDispatcherImpl implements EvalDispatcher {
 
@@ -25,9 +25,9 @@ public class EvalDispatcherImpl implements EvalDispatcher {
 
     @Override
     public EvalAck dispatch(EvalRequest request) {
-        WorkerHandle handle = workerRegistry.findFreeWorker();
+        WorkerHandle handle = workerRegistry.nextWorker();
         if (handle == null) {
-            return new EvalAck(false, "Nijedna radna stanica trenutno nema slobodan kapacitet");
+            return new EvalAck(false, "Nijedna radna stanica trenutno nije prijavljena");
         }
 
         try (MessageConnection connection = MessageConnection.connectTo(
@@ -39,7 +39,7 @@ public class EvalDispatcherImpl implements EvalDispatcher {
             }
             logger.log("EvalDispatcher", "eval() zadatak '" + request.getName()
                     + "' (job set " + request.getJobSetId() + ") -> stanica "
-                    + handle.getWorkerId());
+                    + handle.getWorkerId() + " (round-robin)");
             return (EvalAck) response;
         } catch (Exception e) {
             logger.log("EvalDispatcher", "Slanje eval() zadatka stanici " + handle.getWorkerId()

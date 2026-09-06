@@ -2,7 +2,6 @@ package rs.ac.bg.etf.kdp.server;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -13,16 +12,12 @@ import rs.ac.bg.etf.kdp.net.MessageConnection;
 import rs.ac.bg.etf.kdp.protocol.FailoverAction;
 import rs.ac.bg.etf.kdp.protocol.JobDispatch;
 import rs.ac.bg.etf.kdp.protocol.JobDispatchAck;
+import rs.ac.bg.etf.kdp.protocol.JobStatus;
 import rs.ac.bg.etf.kdp.util.SimpleLogger;
 
-/**
- * Pozadinska nit: na svakih intervalMs proverava sve prijavljene stanice;
- * ako neka nije javila heartbeat u poslednja dva intervala, proglasava je
- * mrtvom i uklanja iz WorkerRegistry-ja.
- */
 public class HeartbeatMonitor implements Runnable {
 
-    private static final long DECISION_TIMEOUT_MS = 15000; // koliko cekamo klijentovu odluku
+    private static final long DECISION_TIMEOUT_MS = 15000;
 
     private final WorkerRegistry workerRegistry;
     private final JobRegistry jobRegistry;
@@ -84,9 +79,7 @@ public class HeartbeatMonitor implements Runnable {
                 ChannelEvent.workerFailure(failedWorkerId, decisionFuture));
 
         if (!delivered) {
-            // klijent vec diskonektovan / kanal ne postoji vise - spec:
-            // "Ukoliko korisnik nije dostupan, prekida se izvrsavanje celog posla"
-            jobRegistry.updateStatus(job.getJobId(), rs.ac.bg.etf.kdp.protocol.JobStatus.ABORTED);
+            jobRegistry.updateStatus(job.getJobId(), JobStatus.ABORTED);
             logger.log("HeartbeatMonitor", "Posao " + job.getJobId()
                     + " ABORTED - klijent nije dostupan za odluku o padu stanice " + failedWorkerId);
             return;
@@ -106,10 +99,10 @@ public class HeartbeatMonitor implements Runnable {
         }
 
         if (action == FailoverAction.ABORT) {
-            jobRegistry.updateStatus(job.getJobId(), rs.ac.bg.etf.kdp.protocol.JobStatus.ABORTED);
+            jobRegistry.updateStatus(job.getJobId(), JobStatus.ABORTED);
             channelRegistry.publish(job.getJobId(), ChannelEvent.jobFinished(
                     new rs.ac.bg.etf.kdp.protocol.JobFinished(job.getJobId(),
-                            rs.ac.bg.etf.kdp.protocol.JobStatus.ABORTED, null, null)));
+                            JobStatus.ABORTED, null, null)));
             return;
         }
 
@@ -117,13 +110,13 @@ public class HeartbeatMonitor implements Runnable {
     }
 
     private void redispatch(JobRecord job, int failedWorkerId) {
-        WorkerHandle newHandle = workerRegistry.findFreeWorkerExcept(failedWorkerId);
+        // NOVO: nextWorkerExcept() - round-robin, preskace pogodjenu stanicu
+        WorkerHandle newHandle = workerRegistry.nextWorkerExcept(failedWorkerId);
         if (newHandle == null) {
-            jobRegistry.fail(job.getJobId(), "Nijedna druga radna stanica trenutno nema slobodan kapacitet");
+            jobRegistry.fail(job.getJobId(), "Nijedna druga radna stanica trenutno nije prijavljena");
             channelRegistry.publish(job.getJobId(), ChannelEvent.jobFinished(
                     new rs.ac.bg.etf.kdp.protocol.JobFinished(job.getJobId(),
-                            rs.ac.bg.etf.kdp.protocol.JobStatus.FAILED,
-                            job.getFailureMessage(), null)));
+                            JobStatus.FAILED, job.getFailureMessage(), null)));
             return;
         }
 
@@ -137,7 +130,7 @@ public class HeartbeatMonitor implements Runnable {
             Object ack = connection.receive();
             if (ack instanceof JobDispatchAck && ((JobDispatchAck) ack).isAccepted()) {
                 jobRegistry.assignWorker(job.getJobId(), newHandle.getWorkerId());
-                jobRegistry.updateStatus(job.getJobId(), rs.ac.bg.etf.kdp.protocol.JobStatus.RUNNING);
+                jobRegistry.updateStatus(job.getJobId(), JobStatus.RUNNING);
                 logger.log("HeartbeatMonitor", "Posao " + job.getJobId()
                         + " prosledjen stanici " + newHandle.getWorkerId()
                         + " posle pada stanice " + failedWorkerId);
@@ -154,7 +147,7 @@ public class HeartbeatMonitor implements Runnable {
                 + " nije uspelo: " + reason);
         channelRegistry.publish(job.getJobId(), ChannelEvent.jobFinished(
                 new rs.ac.bg.etf.kdp.protocol.JobFinished(job.getJobId(),
-                        rs.ac.bg.etf.kdp.protocol.JobStatus.FAILED, job.getFailureMessage(), null)));
+                        JobStatus.FAILED, job.getFailureMessage(), null)));
     }
 
     public void stop() {

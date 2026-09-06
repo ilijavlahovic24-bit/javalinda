@@ -13,21 +13,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Socket servis koji radna stanica izlaze za dolazne pozive od servera -
- * ovo je "dispatchHost/dispatchPort" iz WorkerRegistration (Faza 5).
- * Prima JobDispatch (glavni posao) i EvalRequest (eval() zadatak) na
- * istoj listenici, razlikuje po tipu poruke.
+ * Prima JobDispatch i EvalRequest poruke. VISE NE PROVERAVA slobodan
+ * kapacitet - svaki posao/eval se odmah prihvata (JobDispatchAck/EvalAck
+ * uvek uspesan cim stigne, osim ako samo pokretanje procesa baci
+ * izuzetak). jobPool je CachedThreadPool - nema gornje granice broja niti,
+ * svaki posao dobija sopstvenu nit odmah.
  */
-
-
-
 public class WorkerDispatchServer {
 
     private final MessageServer messageServer;
     private final JobProcessRunner jobRunner;
     private final EvalProcessRunner evalRunner;
     private final SimpleLogger logger;
-    private final int capacity;
     private final AtomicInteger activeJobs = new AtomicInteger(0);
     private final ExecutorService jobPool;
     private JobResultReporter resultReporter;
@@ -38,11 +35,15 @@ public class WorkerDispatchServer {
 
     public WorkerDispatchServer(int port, int capacity, JobProcessRunner jobRunner,
                                 EvalProcessRunner evalRunner, SimpleLogger logger) {
-        this.capacity = capacity;
         this.jobRunner = jobRunner;
         this.evalRunner = evalRunner;
         this.logger = logger;
-        this.jobPool = Executors.newFixedThreadPool(Math.max(1, capacity));
+        // NOVO: CachedThreadPool umesto FixedThreadPool(capacity) - nema
+        // vise gornje granice broja istovremenih poslova/eval zadataka na
+        // ovoj stanici; 'capacity' parametar se i dalje prihvata radi
+        // kompatibilnosti poziva i informativnog prikaza u WorkerRegistration,
+        // ali se ovde vise ne koristi za ogranicavanje.
+        this.jobPool = Executors.newCachedThreadPool();
         this.messageServer = new MessageServer(port, this::handleConnection);
     }
 
@@ -63,8 +64,14 @@ public class WorkerDispatchServer {
         return messageServer.getPort();
     }
 
+    /** NOVO: broj trenutno aktivnih poslova/eval zadataka - zamenjuje raniji getFreeSlots(). */
+    public int getActiveJobs() {
+        return activeJobs.get();
+    }
+
+    /** I dalje se salje u Heartbeat porukama - server ga vise ne koristi za odluku o izboru stanice (round-robin), ali se cuva radi buduce upotrebe/dijagnostike. */
     public int getFreeSlots() {
-        return Math.max(0, capacity - activeJobs.get());
+        return Math.max(0, Integer.MAX_VALUE - activeJobs.get());
     }
 
     private void handleConnection(MessageConnection connection) throws Exception {
@@ -80,15 +87,11 @@ public class WorkerDispatchServer {
 
     private void handleJobDispatch(MessageConnection connection, JobDispatch dispatch)
             throws Exception {
-        if (getFreeSlots() <= 0) {
-            connection.send(new JobDispatchAck(false, "Nema slobodnog kapaciteta"));
-            return;
-        }
+        // NOVO: nema vise provere slobodnog kapaciteta - uvek prihvata
         connection.send(new JobDispatchAck(true, null));
         activeJobs.incrementAndGet();
         jobPool.submit(() -> {
             try {
-                // NOVO: dispatch.getOutputFileNames() umesto fiksnog spiska
                 rs.ac.bg.etf.kdp.protocol.JobResultReport report =
                         jobRunner.run(dispatch, dispatch.getOutputFileNames());
                 if (resultReporter != null) {
@@ -102,10 +105,7 @@ public class WorkerDispatchServer {
 
     private void handleEvalRequest(MessageConnection connection, EvalRequest request)
             throws Exception {
-        if (getFreeSlots() <= 0) {
-            connection.send(new EvalAck(false, "Nema slobodnog kapaciteta za eval()"));
-            return;
-        }
+        // NOVO: nema vise provere slobodnog kapaciteta - uvek pokusava
         try {
             evalRunner.run(request);
             connection.send(new EvalAck(true, null));

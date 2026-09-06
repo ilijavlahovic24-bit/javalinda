@@ -23,6 +23,14 @@ import rs.ac.bg.etf.kdp.protocol.WorkerRegisterAck;
 import rs.ac.bg.etf.kdp.protocol.WorkerRegistration;
 import rs.ac.bg.etf.kdp.util.SimpleLogger;
 
+/**
+ * Cetiri tipa konekcija na istom portu, razlikovane po PRVOJ poruci:
+ *   - WorkerRegistration -> dugotrajna, posle toga Heartbeat poruke
+ *   - JobResultReport    -> kratkotrajna (worker javlja zavrsetak posla)
+ *   - JobSubmission       -> DUGOTRAJNA (ostaje otvorena do kraja posla -
+ *                            Faza 7, klijent ucestvuje u failover odluci)
+ *   - JobStatusRequest    -> kratkotrajna (klijent pita status/rezultat)
+ */
 public class WorkerRegistrationServer {
 
     private final WorkerRegistry workerRegistry;
@@ -62,7 +70,7 @@ public class WorkerRegistrationServer {
 
         if (first instanceof JobResultReport) {
             handleJobResult((JobResultReport) first);
-            connection.send(new JobResultAck()); // NOVO - worker ceka ovo na svojoj konekciji
+            connection.send(new JobResultAck());
         } else if (first instanceof JobSubmission) {
             handleJobSubmission(connection, (JobSubmission) first);
         } else if (first instanceof JobStatusRequest) {
@@ -86,6 +94,10 @@ public class WorkerRegistrationServer {
                     Heartbeat hb = (Heartbeat) message;
                     workerRegistry.heartbeat(hb.getWorkerId(), hb.getFreeSlots());
                     connection.send(new HeartbeatAck());
+                } else {
+                    logger.log("WorkerRegistrationServer",
+                            "Neocekivana poruka na registracionoj konekciji stanice "
+                                    + handle.getWorkerId() + ": " + message);
                 }
             }
         } finally {
@@ -93,7 +105,6 @@ public class WorkerRegistrationServer {
         }
     }
 
-    /** worker javlja rezultat - NE saljemo nista direktno njemu; guramo JOB_FINISHED dogadjaj ka klijentskoj konekciji tog posla. */
     private void handleJobResult(JobResultReport report) {
         JobStatus finalStatus;
         if (report.isSuccess()) {
@@ -108,15 +119,6 @@ public class WorkerRegistrationServer {
                         report.getOutputFiles())));
     }
 
-    /**
-     *  worker i dalje ocekuje JobResultAck kao odgovor na SVOJU
-     * konekciju (WorkerMain.resultReporter salje pa ceka receive()) - ali
-     * ta konekcija je ODVOJENA od klijentske. Server ovde treba da odgovori
-     * workeru na NJEGOVOJ konekciji, ne klijentovoj - to se desava u
-     * handleConnection() koji je pozvao ovu metodu, pa dodajemo send() tamo
-     * gde imamo pristup workerovoj connection referenci.
-     */
-
     private void handleJobSubmission(MessageConnection connection, JobSubmission submission)
             throws Exception {
         JobRecord record = jobRegistry.submit(submission.getJarBytes(), submission.getMainClassName(),
@@ -126,9 +128,9 @@ public class WorkerRegistrationServer {
 
         java.util.concurrent.BlockingQueue<ChannelEvent> events = channelRegistry.register(jobId);
 
-        WorkerHandle handle = workerRegistry.findFreeWorker();
+        WorkerHandle handle = workerRegistry.nextWorker();
         if (handle == null) {
-            jobRegistry.fail(jobId, "Nijedna radna stanica trenutno nema slobodan kapacitet");
+            jobRegistry.fail(jobId, "Nijedna radna stanica trenutno nije prijavljena");
             connection.send(new JobSubmissionAck(jobId, null));
             connection.send(new JobFinished(jobId, JobStatus.FAILED, record.getFailureMessage(), null));
             channelRegistry.unregister(jobId);
@@ -149,8 +151,6 @@ public class WorkerRegistrationServer {
             return;
         }
 
-        // Glavna petlja konekcije: cekaj dogadjaje (WORKER_FAILURE, JOB_FINISHED),
-        // salji ih klijentu, za WORKER_FAILURE ocekuj i procitaj odluku.
         try {
             while (true) {
                 ChannelEvent event = events.take();
@@ -158,13 +158,11 @@ public class WorkerRegistrationServer {
                     connection.send(event.getJobFinished());
                     break;
                 }
-                // WORKER_FAILURE
                 connection.send(new WorkerFailureNotice(jobId, event.getFailedWorkerId()));
                 Object response;
                 try {
                     response = connection.receive();
                 } catch (Exception e) {
-                    // klijent diskonektovan dok smo cekali odluku
                     event.getDecisionFuture().completeExceptionally(e);
                     break;
                 }
