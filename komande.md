@@ -201,3 +201,35 @@ out=izlaz.txt
 ```
 
 (najviše 6 `in.` linija, najviše 6 imena u `out=`, odvojenih zarezom)
+
+
+
+# kompajliranje oba nova test-posla
+javac -cp out -d testjob-build .\test\TestJobNovcic.java
+
+# pakovanje (svaki u svoj jar - jednostavnije za slanje odvojeno)
+jar cf test-job-novcic.jar -C testjob-build test
+
+# provera da su unutrasnje klase (PlayerRunnable, ElevatorRunnable, PassengerRunnable) unutra
+jar tf test-job-novcic.jar
+
+# pokretanje - problem izbora
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-job-novcic.jar test.TestJobNovcic output.txt
+
+
+#Testovi
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobNovcic output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobLift output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobReaderWriter output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobBarrier output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobProducerConsumer output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobH2O output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobSavingsAccount output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobUnisexBathroom output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobDiningSavages output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobAtomicBroadcast output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobBearHoneybee output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobChildCare output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobJurassicPark output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobParking output.txt
+java -cp out rs.ac.bg.etf.kdp.client.ClientMain submit localhost 6000 test-jobs-all.jar test.TestJobHungryBirds output.txt

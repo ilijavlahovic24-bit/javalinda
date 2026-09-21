@@ -4,23 +4,7 @@ import java.util.Map;
 
 import rs.ac.bg.etf.kdp.net.MessageConnection;
 import rs.ac.bg.etf.kdp.net.MessageServer;
-import rs.ac.bg.etf.kdp.protocol.FailoverAction;
-import rs.ac.bg.etf.kdp.protocol.Heartbeat;
-import rs.ac.bg.etf.kdp.protocol.HeartbeatAck;
-import rs.ac.bg.etf.kdp.protocol.JobDispatch;
-import rs.ac.bg.etf.kdp.protocol.JobDispatchAck;
-import rs.ac.bg.etf.kdp.protocol.JobFinished;
-import rs.ac.bg.etf.kdp.protocol.JobResultAck;
-import rs.ac.bg.etf.kdp.protocol.JobResultReport;
-import rs.ac.bg.etf.kdp.protocol.JobStatus;
-import rs.ac.bg.etf.kdp.protocol.JobStatusRequest;
-import rs.ac.bg.etf.kdp.protocol.JobStatusResponse;
-import rs.ac.bg.etf.kdp.protocol.JobSubmission;
-import rs.ac.bg.etf.kdp.protocol.JobSubmissionAck;
-import rs.ac.bg.etf.kdp.protocol.WorkerFailureDecision;
-import rs.ac.bg.etf.kdp.protocol.WorkerFailureNotice;
-import rs.ac.bg.etf.kdp.protocol.WorkerRegisterAck;
-import rs.ac.bg.etf.kdp.protocol.WorkerRegistration;
+import rs.ac.bg.etf.kdp.protocol.*;
 import rs.ac.bg.etf.kdp.util.SimpleLogger;
 
 /**
@@ -65,22 +49,7 @@ public class WorkerRegistrationServer {
         return messageServer.getPort();
     }
 
-    private void handleConnection(MessageConnection connection) throws Exception {
-        Object first = connection.receive();
 
-        if (first instanceof JobResultReport) {
-            handleJobResult((JobResultReport) first);
-            connection.send(new JobResultAck());
-        } else if (first instanceof JobSubmission) {
-            handleJobSubmission(connection, (JobSubmission) first);
-        } else if (first instanceof JobStatusRequest) {
-            handleJobStatusRequest(connection, (JobStatusRequest) first);
-        } else if (first instanceof WorkerRegistration) {
-            handleWorkerRegistration(connection, (WorkerRegistration) first);
-        } else {
-            logger.log("WorkerRegistrationServer", "Nepoznata poruka, zatvaram: " + first);
-        }
-    }
 
     private void handleWorkerRegistration(MessageConnection connection,
                                           WorkerRegistration registration) throws Exception {
@@ -114,9 +83,27 @@ public class WorkerRegistrationServer {
             jobRegistry.fail(report.getJobId(), report.getErrorMessage());
             finalStatus = JobStatus.FAILED;
         }
-        channelRegistry.publish(report.getJobId(), ChannelEvent.jobFinished(
-                new JobFinished(report.getJobId(), finalStatus, report.getErrorMessage(),
-                        report.getOutputFiles())));
+
+        JobFinished finishEvent = new JobFinished(report.getJobId(), finalStatus,
+                report.getErrorMessage(), report.getOutputFiles());
+
+        // NOVO: ako ima eval() procesa na cekanju, NE saljemo JobFinished odmah
+        boolean readyNow = jobRegistry.markMainDoneAndCheckReady(report.getJobId(), finishEvent);
+        if (readyNow) {
+            channelRegistry.publish(report.getJobId(), ChannelEvent.jobFinished(finishEvent));
+        }
+        // ako nije spremno, evalFinished() ce kasnije, kad zadnji eval stigne,
+        // sam publish-ovati sacuvan dogadjaj (videti handleEvalStatus ispod)
+    }
+
+    private void handleEvalStatus(EvalStatusReport report) {
+        JobFinished readyEvent = jobRegistry.evalFinished(report.getJobSetId(), report.getTaskName(),
+                report.isSuccess(), report.getErrorMessage(), report.isTimedOut());
+        if (readyEvent != null) {
+            // ovo je bio POSLEDNJI eval() na cekanju, I glavni proces je vec
+            // zavrsio ranije - sada konacno saljemo JobFinished klijentu
+            channelRegistry.publish(readyEvent.getJobId(), ChannelEvent.jobFinished(readyEvent));
+        }
     }
 
     private void handleJobSubmission(MessageConnection connection, JobSubmission submission)
@@ -210,4 +197,24 @@ public class WorkerRegistrationServer {
         connection.send(new JobStatusResponse(record.getStatus(), record.getFailureMessage(),
                 outputFiles));
     }
+    private void handleConnection(MessageConnection connection) throws Exception {
+        Object first = connection.receive();
+
+        if (first instanceof JobResultReport) {
+            handleJobResult((JobResultReport) first);
+            connection.send(new JobResultAck());
+        } else if (first instanceof EvalStatusReport) {              // NOVO
+            handleEvalStatus((EvalStatusReport) first);
+            connection.send(new EvalStatusAck());
+        } else if (first instanceof JobSubmission) {
+            handleJobSubmission(connection, (JobSubmission) first);
+        } else if (first instanceof JobStatusRequest) {
+            handleJobStatusRequest(connection, (JobStatusRequest) first);
+        } else if (first instanceof WorkerRegistration) {
+            handleWorkerRegistration(connection, (WorkerRegistration) first);
+        } else {
+            logger.log("WorkerRegistrationServer", "Nepoznata poruka, zatvaram: " + first);
+        }
+    }
+
 }

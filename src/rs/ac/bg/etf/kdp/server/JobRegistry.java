@@ -85,4 +85,57 @@ public class JobRegistry {
     public Iterable<JobRecord> all() {
         return jobs.values();
     }
+
+    /** Poziva EvalDispatcherImpl kad uspesno posalje eval() zadatak radnoj stanici. */
+    public void evalDispatched(long jobId) {
+        JobRecord record = jobs.get(jobId);
+        if (record != null) {
+            int n = record.incrementPendingEval();
+            logger.log("JobRegistry", "Posao " + jobId + " - eval() zadatak zakazan, na cekanju: " + n);
+        }
+    }
+
+    /**
+     * Poziva WorkerRegistrationServer kad stigne EvalStatusReport. Ako je
+     * glavni proces vec zavrsio A ovo je bio poslednji preostali eval() -
+     * vraca "spreman" JobFinished dogadjaj da se konacno posalje klijentu;
+     * inace vraca null (jos se ceka).
+     */
+    public rs.ac.bg.etf.kdp.protocol.JobFinished evalFinished(long jobId, String taskName,
+                                                              boolean success, String errorMessage, boolean timedOut) {
+        JobRecord record = jobs.get(jobId);
+        if (record == null) {
+            return null;
+        }
+        int remaining = record.decrementPendingEval();
+        String outcome = timedOut ? "TIMEOUT (moguca mrtva blokada)" : (success ? "OK" : "GRESKA: " + errorMessage);
+        logger.log("JobRegistry", "Posao " + jobId + " - eval() '" + taskName + "' zavrsen (" + outcome
+                + "), jos na cekanju: " + remaining);
+
+        if (remaining == 0 && record.isMainProcessDone()) {
+            return record.getPendingFinishEvent();
+        }
+        return null;
+    }
+
+    /**
+     * Poziva se kad glavni proces javi rezultat. Ako ima jos eval() procesa
+     * na cekanju, dogadjaj se CUVA i NE salje odmah - vraca false (pozivalac
+     * ne sme jos da javi klijentu). Ako nema cekajucih, vraca true (moze
+     * odmah da se posalje).
+     */
+    public boolean markMainDoneAndCheckReady(long jobId, rs.ac.bg.etf.kdp.protocol.JobFinished finishEvent) {
+        JobRecord record = jobs.get(jobId);
+        if (record == null) {
+            return true;
+        }
+        record.markMainProcessDone(finishEvent);
+        int pending = record.getPendingEvalCount();
+        if (pending > 0) {
+            logger.log("JobRegistry", "Posao " + jobId + " - glavni proces zavrsen, ali ceka se jos "
+                    + pending + " eval() pod-procesa pre nego sto se javi klijentu");
+            return false;
+        }
+        return true;
+    }
 }

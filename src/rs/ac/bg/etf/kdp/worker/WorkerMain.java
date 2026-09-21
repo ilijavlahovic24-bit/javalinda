@@ -73,6 +73,16 @@ public class WorkerMain {
                         + " serveru nije uspelo: " + e);
             }
         });
+        dispatchServer.setEvalResultReporter(report -> {
+            try (MessageConnection resultConnection =
+                         MessageConnection.connectTo(serverHost, registrationPort)) {
+                resultConnection.send(report);
+                resultConnection.receive(); // EvalStatusAck
+            } catch (Exception e) {
+                logger.log("WorkerMain", "Slanje eval() statusa za '" + report.getTaskName()
+                        + "' serveru nije uspelo: " + e);
+            }
+        });
 
         boolean gui = java.util.Arrays.asList(args).contains("--gui");
         if (gui) {

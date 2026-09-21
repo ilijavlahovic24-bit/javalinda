@@ -98,4 +98,36 @@ public class JobRecord {
     public void setOutputFiles(Map<String, byte[]> outputFiles) {
         this.outputFiles = outputFiles;
     }
+
+
+    private final java.util.concurrent.atomic.AtomicInteger pendingEvalCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile boolean mainProcessDone = false;
+    private volatile rs.ac.bg.etf.kdp.protocol.JobFinished pendingFinishEvent = null;
+
+    public int incrementPendingEval() {
+        return pendingEvalCount.incrementAndGet();
+    }
+
+    public int decrementPendingEval() {
+        return Math.max(0, pendingEvalCount.decrementAndGet());
+    }
+
+    public int getPendingEvalCount() {
+        return pendingEvalCount.get();
+    }
+
+    public void markMainProcessDone(rs.ac.bg.etf.kdp.protocol.JobFinished finishEvent) {
+        this.mainProcessDone = true;
+        this.pendingFinishEvent = finishEvent;
+    }
+
+    public boolean isMainProcessDone() {
+        return mainProcessDone;
+    }
+
+    public rs.ac.bg.etf.kdp.protocol.JobFinished getPendingFinishEvent() {
+        return pendingFinishEvent;
+    }
+
 }

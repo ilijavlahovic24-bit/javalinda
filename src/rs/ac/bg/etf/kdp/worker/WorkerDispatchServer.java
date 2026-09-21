@@ -113,4 +113,11 @@ public class WorkerDispatchServer {
             connection.send(new EvalAck(false, "Pokretanje eval() procesa nije uspelo: " + e));
         }
     }
+
+    private EvalProcessRunner.EvalResultReporter evalResultReporter;
+
+    public void setEvalResultReporter(EvalProcessRunner.EvalResultReporter reporter) {
+        this.evalResultReporter = reporter;
+        evalRunner.setResultReporter(reporter);
+    }
 }

@@ -22,7 +22,7 @@ public class ServerMain {
                 tupleSpaceHost, tupleSpacePort, logger);
         registrationServer.start();
 
-        EvalDispatcherImpl evalDispatcher = new EvalDispatcherImpl(workerRegistry, logger);
+        EvalDispatcherImpl evalDispatcher = new EvalDispatcherImpl(workerRegistry, jobRegistry, logger);
         TupleSpaceServer tupleSpaceServer =
                 new TupleSpaceServer(tupleSpacePort, logger, evalDispatcher);
         tupleSpaceServer.start();
